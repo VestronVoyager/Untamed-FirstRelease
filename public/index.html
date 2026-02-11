@@ -1,0 +1,44 @@
+<!--
+UnTamed
+Copyright (C) 2025 vestron.wtf <oss@vestron.wtf>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, version 3 of the License only.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see https://www.gnu.org/licenses/.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Screen Streamer</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <img id="bg" src="themes/img.png" alt="background" />
+
+  <div class="overlay">
+    <h1>Share your screen with the host</h1>
+    <div>
+      <input id="passcodeInput" inputmode="numeric" maxlength="6" placeholder="Enter PIN" />
+      <div class="hint">Enter the 6-digit PIN shown under the host's QR code</div>
+    </div>
+    <button id="shareBtn">Start Streaming</button>
+    <video id="localVideo" autoplay playsinline muted></video>
+  </div>
+
+  <div id="reloadNotice" role="status" aria-live="polite">
+    Auto-reload paused after repeated attempts. Please refresh the page manually if streaming doesn't recover.
+  </div>
+
+  <script src="js/index.js"></script>
+</body>
+</html>

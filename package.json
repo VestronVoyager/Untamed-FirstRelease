@@ -1,0 +1,15 @@
+{
+  "name": "untamed",
+  "version": "0.0.0",
+  "private": true,
+
+  "bin": {
+    "untamed": "./untamed.js"
+  },
+
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.13.0",
+    "selfsigned": "^2.1.0"
+  }
+}

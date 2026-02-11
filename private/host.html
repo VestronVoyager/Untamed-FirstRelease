@@ -1,0 +1,873 @@
+<!--
+UnTamed
+Copyright (C) 2025 vestron.wtf <oss@vestron.wtf>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, version 3 of the License only.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see https://www.gnu.org/licenses/.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>UnTamed Streaming Interface</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="third-party/qrcodejs/qrcode.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: black;
+      font-family: "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+
+    #remoteVideo {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background: black;
+      display: none;
+      z-index: 1000;
+    }
+
+    #landing {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: url("themes/img.png") center/cover no-repeat;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* canvas for falling needles/leaves */
+    #leafCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0; /* behind .overlay */
+      pointer-events: none; /* don't block clicks or selection */
+      display: block;
+    }
+
+    .overlay {
+      background: rgba(0,0,0,0.55);
+      padding: 40px;
+      border-radius: 20px;
+      margin: 80px auto;
+      width: 80%;
+      max-width: 600px;
+      text-align: center;
+      color: white;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      backdrop-filter: blur(6px); /* gentle blur of the background behind the overlay */
+      z-index: 1; /* above leaves */
+      position: relative;
+    }
+
+    #qrcode { margin-top: 20px; display: inline-block; }
+    #host-ip { margin-top: 12px; }
+
+    /* Passcode display */
+    #passcodeWrap {
+      margin-top: 8px;
+      color: #fff;
+      font-weight: 600;
+      font-size: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+    }
+    #pin {
+      letter-spacing: 6px;
+      background: rgba(255,255,255,0.06);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-family: "Courier New", monospace;
+      font-size: 20px;
+    }
+    #pinState {
+      font-size: 12px;
+      opacity: 0.9;
+      color: #ddd;
+    }
+  </style>
+</head>
+<body>
+  <div id="landing">
+    <canvas id="leafCanvas" aria-hidden="true"></canvas>
+
+    <div class="overlay">
+      <h1>Welcome to the in-house streaming interface</h1>
+      <p>Scan the QR code to start streaming:</p>
+      <div id="qrcode" role="img" aria-label="QR code linking to host"></div>
+      <p id="host-ip">loading...</p>
+
+      <div id="passcodeWrap" aria-live="polite" aria-atomic="true">
+        <div id="pin">----</div>
+        <div id="pinState">loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <video id="remoteVideo" autoplay playsinline></video>
+
+  <script>
+
+
+    const HARDCODE_THEME = null;
+
+    function getQueryParam(name) {
+      try {
+        const params = new URLSearchParams(location.search);
+        return params.get(name);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function detectThemeByMonth() {
+      try {
+        const now = new Date();
+        const month = now.getMonth();
+        if ([11,0,1].includes(month)) return "winter";
+        if ([8,9,10].includes(month)) return "fall";
+        return "default";
+      } catch (e) {
+        return "default";
+      }
+    }
+
+    function resolveTheme() {
+      if (HARDCODE_THEME) {
+        return HARDCODE_THEME;
+      }
+      const q = getQueryParam('theme');
+      if (q && ['fall','winter','default'].includes(q.toLowerCase())) {
+        return q.toLowerCase();
+      }
+      if (window.FORCE_THEME && ['fall','winter','default'].includes(window.FORCE_THEME.toLowerCase())) {
+        return window.FORCE_THEME.toLowerCase();
+      }
+      return detectThemeByMonth();
+    }
+
+    const themeMap = {
+      "default": "themes/img.png",
+      "fall": "themes/fall.png",
+      "winter": "themes/winter.png"
+    };
+
+    window.setTestTheme = function(newTheme) {
+      if (!newTheme || !themeMap[newTheme]) return false;
+      applyTheme(newTheme);
+      return true;
+    };
+
+    let theme = resolveTheme();
+
+    function applyTheme(newTheme) {
+      if (!newTheme || !themeMap[newTheme]) return;
+      theme = newTheme;
+      landing.style.backgroundImage = `url("${themeMap[theme]}")`;
+      if (getComputedStyle(landing).display !== "none" && !mq.matches) {
+        stopParticles(true);
+        startParticles(true);
+      }
+    }
+
+    const landing = document.getElementById("landing");
+    landing.style.backgroundImage = `url("${themeMap[theme]}")`;
+
+    const video = document.getElementById("remoteVideo");
+    const leafCanvas = document.getElementById("leafCanvas");
+    const ctx = leafCanvas.getContext("2d");
+
+    const pinEl = document.getElementById("pin");
+    const pinStateEl = document.getElementById("pinState");
+    const qEl = document.getElementById("qrcode");
+    const hostIpEl = document.getElementById("host-ip");
+
+    const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${wsProtocol}://${location.host}`);
+    let pc = null;
+
+    // Keep the hostname base URL available for QR generation
+    let hostBaseUrl = null;
+    let pendingCodeForQRCode = null;
+
+    // Passcode countdown
+    let passcodeTimer = null;
+    function msToClock(ms) {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const mm = Math.floor(s / 60);
+      const ss = s % 60;
+      return `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+    }
+
+    // QR regeneration helper
+    function updateQRCodeWithCode(code) {
+      try {
+        qEl.innerHTML = "";
+        const target = hostBaseUrl ? (code ? `${hostBaseUrl}?code=${encodeURIComponent(code)}` : hostBaseUrl) : (code ? `?code=${encodeURIComponent(code)}` : "");
+        if (typeof QRCode === "function") {
+          new QRCode(qEl, { text: target, width: 220, height: 220 });
+        } else {
+          // fallback: show URL text if library isn't loaded
+          qEl.textContent = target || "";
+        }
+      } catch (e) {
+        console.warn("updateQRCodeWithCode error", e);
+        qEl.textContent = hostBaseUrl || "";
+      }
+    }
+
+    async function fetchPasscodeAndUpdate() {
+      try {
+        const r = await fetch('/passcode', { cache: 'no-store' });
+        if (!r.ok) throw new Error('bad resp');
+        const json = await r.json();
+        updatePasscodeDisplay(json);
+      } catch (e) {
+        pinEl.textContent = '----';
+        pinStateEl.textContent = 'unable to fetch passcode';
+        // fallback QR: remove code param
+        pendingCodeForQRCode = null;
+        if (hostBaseUrl) updateQRCodeWithCode(null);
+      }
+    }
+
+    function updatePasscodeDisplay(payload) {
+      if (!payload || !payload.code) {
+        pinEl.textContent = '----';
+        pinStateEl.textContent = 'no passcode';
+        // regenerate QR without code
+        pendingCodeForQRCode = null;
+        if (hostBaseUrl) updateQRCodeWithCode(null);
+        return;
+      }
+      pinEl.textContent = payload.code;
+      if (payload.used) {
+        pinStateEl.textContent = 'used — waiting for client';
+      } else {
+        // compute countdown
+        const expiresAt = (typeof payload.expiresAt === 'number') ? payload.expiresAt : Date.now() + 300000;
+        const tick = () => {
+          const now = Date.now();
+          const remaining = expiresAt - now;
+          if (remaining <= 0) {
+            pinStateEl.textContent = 'expired — refreshing…';
+            pinEl.textContent = '----';
+            clearInterval(passcodeTimer);
+            passcodeTimer = null;
+            // refresh from server
+            setTimeout(fetchPasscodeAndUpdate, 200);
+            // make sure QR no longer contains the expired code
+            pendingCodeForQRCode = null;
+            if (hostBaseUrl) updateQRCodeWithCode(null);
+            return;
+          }
+          pinStateEl.textContent = `expires in ${msToClock(remaining)}`;
+        };
+        if (passcodeTimer) clearInterval(passcodeTimer);
+        tick();
+        passcodeTimer = setInterval(tick, 500);
+      }
+
+      if (hostBaseUrl) {
+        updateQRCodeWithCode(payload.code);
+      } else {
+        pendingCodeForQRCode = payload.code;
+      }
+    }
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({type:"host"}));
+    };
+
+    ws.onmessage = async evt => {
+      let data;
+      try{ data = JSON.parse(evt.data); } catch(e){ return; }
+
+      if (data.type === "passcodeUpdated") {
+        updatePasscodeDisplay(data);
+        return;
+      }
+
+      if(data.type==="offer") {
+        if(!pc) createHostPC();
+        await pc.setRemoteDescription(data.offer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({type:"answer", to:"client", answer}));
+        return;
+      }
+
+      if(data.type==="candidate" && data.candidate) {
+        if(pc) pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(e=>console.warn(e));
+        return;
+      }
+
+      if(data.type==="clientDisconnected") {
+        console.info("Received clientDisconnected from server");
+        handleRemoteStreamEnded();
+      }
+    };
+
+    ws.onclose = () => {
+      try {
+        console.warn("WebSocket closed - returning to landing");
+        handleRemoteStreamEnded();
+      } catch (e) {}
+    };
+
+    // dynamic QR + passcode fetch
+    fetch("/hostname").then(r=>r.json()).then(({hostname})=>{
+      hostIpEl.textContent = hostname;
+      // store base url for qr generation
+      hostBaseUrl = `${location.protocol}//${hostname}`;
+
+      updateQRCodeWithCode(null);
+
+      fetchPasscodeAndUpdate();
+
+      if (pendingCodeForQRCode) {
+        updateQRCodeWithCode(pendingCodeForQRCode);
+        pendingCodeForQRCode = null;
+      }
+    }).catch(e=>{
+      console.error(e);
+      // fallback: show location host if available
+      hostIpEl.textContent = location.host || "unknown host";
+      hostBaseUrl = `${location.protocol}//${location.host}`;
+      updateQRCodeWithCode(null);
+      fetchPasscodeAndUpdate();
+    });
+
+
+    let frameWatchdogInterval = null;
+    let lastVideoTime = 0;
+    let lastProgressTimestamp = 0;
+    const WATCHDOG_POLL_MS = 1000;
+    const STALL_THRESHOLD_MS = 3500;
+
+    function startFrameWatchdog() {
+      stopFrameWatchdog();
+      lastVideoTime = video.currentTime || 0;
+      lastProgressTimestamp = performance.now();
+      frameWatchdogInterval = setInterval(() => {
+        try {
+          if (!video || video.style.display === "none" || !video.srcObject) {
+            lastVideoTime = 0;
+            lastProgressTimestamp = performance.now();
+            return;
+          }
+          const ct = video.currentTime || 0;
+          if (ct > lastVideoTime + 0.001) {
+            lastVideoTime = ct;
+            lastProgressTimestamp = performance.now();
+            return;
+          }
+          const now = performance.now();
+          if (now - lastProgressTimestamp > STALL_THRESHOLD_MS) {
+            console.warn("Frame watchdog: no progress detected - treating stream as ended");
+            handleRemoteStreamEnded();
+          }
+        } catch (e) {
+          console.warn("Frame watchdog error", e);
+        }
+      }, WATCHDOG_POLL_MS);
+    }
+
+    function stopFrameWatchdog() {
+      if (frameWatchdogInterval) {
+        clearInterval(frameWatchdogInterval);
+        frameWatchdogInterval = null;
+      }
+    }
+
+    function monitorRemoteStream(stream) {
+      if (!stream) return;
+      stream.oninactive = () => {
+        console.warn("Remote stream inactive event");
+        setTimeout(() => {
+          if (!stream.active) handleRemoteStreamEnded();
+        }, 600);
+      };
+      stream.addEventListener && stream.addEventListener('removetrack', () => {
+        setTimeout(() => {
+          const tracks = stream.getTracks();
+          if (!tracks.length || tracks.every(t => t.readyState === 'ended')) {
+            handleRemoteStreamEnded();
+          }
+        }, 600);
+      });
+      stream.getTracks().forEach(t => {
+        t.onended = () => {
+          console.warn("Remote track ended:", t.kind);
+          setTimeout(() => {
+            const tracks = stream.getTracks();
+            if (!tracks.length || tracks.every(tr => tr.readyState === 'ended')) {
+              handleRemoteStreamEnded();
+            }
+          }, 600);
+        };
+      });
+      startFrameWatchdog();
+    }
+
+    function ensureParticlesRunning() {
+      try {
+        if (mq.matches) return;
+        landing.style.display = "flex";
+        leafCanvas.style.display = "block";
+        lastTime = 0;
+        lastDrawTime = 0;
+        fitCanvasToDisplaySize(leafCanvas);
+        const rect = leafCanvas.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        const count = Math.min(MAX_PARTICLES, Math.max(12, Math.floor(area / 1400)));
+        createParticles(count, rect.width, rect.height, theme);
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(step);
+      } catch (e) {
+        console.warn("ensureParticlesRunning error", e);
+      }
+    }
+
+    function handleRemoteStreamEnded() {
+      console.info("Handling remote stream end -> returning to landing (robust reset)");
+      stopFrameWatchdog();
+      try {
+        if (video) {
+          video.pause();
+          try { video.srcObject && video.srcObject.getTracks().forEach(t=>t.stop()); } catch (e) {}
+          video.srcObject = null;
+        }
+        if (pc) {
+          try { pc.getSenders && pc.getSenders().forEach(s => s.track && s.track.stop()); } catch(e){}
+          try { pc.close(); } catch(e){}
+          pc = null;
+        }
+      } catch (e) {
+        console.warn("Error cleaning up after stream end:", e);
+      }
+      try {
+        video.style.display = "none";
+        landing.style.display = "flex";
+        stopParticles(true);
+        setTimeout(() => {
+          ensureParticlesRunning();
+        }, 40);
+      } catch (e) {
+        console.warn("Error when restarting UI after stream end:", e);
+      }
+      try {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({type: "hostReturnedToLanding"}));
+        }
+      } catch (e) {}
+      // fetch latest passcode when returning to landing
+      setTimeout(fetchPasscodeAndUpdate, 120);
+      // exit any fullscreen to ensure overlay is visible
+      exitFullscreenIfNeeded();
+    }
+
+    function createHostPC() {
+      pc = new RTCPeerConnection();
+
+      pc.ontrack = (event) => {
+        const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+        video.srcObject = stream;
+        // No check for user gesture: always unmute and play, make sure chromiums startup args allow this!
+        video.muted = false;
+        video.volume = 1.0;
+        video.style.display = "block";
+        landing.style.display = "none";
+        syncParticleVisibility();
+        monitorRemoteStream(stream);
+
+        // auto attempt play immediately without user gesture (kiosk mode)
+        video.play().catch(()=>{});
+
+        requestFullscreenVideo();
+      };
+
+      pc.onconnectionstatechange = () => {
+        if(pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
+          console.warn("PC connection state changed:", pc.connectionState);
+          setTimeout(() => {
+            handleRemoteStreamEnded();
+          }, 300);
+        }
+      };
+
+      pc.onicecandidate = ev => {
+        if(ev.candidate) ws.send(JSON.stringify({type:"candidate", to:"client", candidate: ev.candidate}));
+      };
+
+      return pc;
+    }
+
+    // fullscreen
+    function isFullscreen() {
+      return !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      );
+    }
+
+    function requestFullscreenVideo() {
+      setTimeout(() => {
+        if (isFullscreen()) return;
+        if (video.requestFullscreen) video.requestFullscreen();
+        else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
+        else if (video.mozRequestFullScreen) video.mozRequestFullScreen();
+        else if (video.msRequestFullscreen) video.msRequestFullscreen();
+        else if (document.body.requestFullscreen) document.body.requestFullscreen();
+      }, 60);
+    }
+
+    function exitFullscreenIfNeeded() {
+      if (isFullscreen()) {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        else if (document.mozCancelFullScreen) document.mozCancelFullScreen();
+        else if (document.msExitFullscreen) document.msExitFullscreen();
+      }
+    }
+
+    let particles = [];
+    let rafId = null;
+    let lastTime = 0;
+    let lastDrawTime = 0;
+    const MAX_PARTICLES = 80;
+
+    const MAX_FPS = 6000000;
+    const MIN_FRAME_INTERVAL = 1000 / MAX_FPS;
+
+    const palettes = {
+      default: ["#C38E5A", "#AD613C", "#607D5A", "#D4876A"], 
+      fall: ["#6B3E1F", "#A64B2A", "#D98E3A", "#C0703A", "#8A4A2B"], 
+      winter: ["#FFFFFF", "#F8FBFF", "#EAF0F8"]
+    };
+
+    function fitCanvasToDisplaySize(canvas) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        canvas.style.width = rect.width + "px";
+        canvas.style.height = rect.height + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+    }
+
+    class Leaf {
+      constructor(areaWidth, areaHeight, themeKind) {
+        this.themeKind = themeKind || "default";
+        this.reset(areaWidth, areaHeight);
+      }
+      reset(areaWidth, areaHeight) {
+        this.areaWidth = areaWidth;
+        this.areaHeight = areaHeight;
+        this.x = Math.random() * areaWidth;
+        this.y = -10 - Math.random() * areaHeight * 0.25;
+        this.size = 8 + Math.random() * 26;
+        this.speed = 12 + Math.random() * 36; 
+        this.swayAmp = 8 + Math.random() * 36;
+        this.swayFreq = 0.15 + Math.random() * 0.6;
+        this.rotation = (Math.random() * 360) * (Math.PI/180);
+        this.rotationSpeed = (-0.5 + Math.random()) * 0.6;
+        const leafChance = (this.themeKind === "fall") ? 0.45 : 0.65;
+        this.shape = Math.random() < leafChance ? "needle" : "leaf";
+        const palette = (this.themeKind === "fall") ? palettes.fall : palettes.default;
+        this.color = palette[Math.floor(Math.random() * palette.length)];
+        this.opacity = 0.62 + Math.random() * 0.32;
+        this.life = 0;
+        this.tOffset = Math.random() * 1000;
+      }
+      update(dt) {
+        this.life += dt;
+        const t = (this.life * 0.001) + this.tOffset;
+        const sway = Math.sin(t * this.swayFreq * 2 * Math.PI) * this.swayAmp;
+        this.x += (sway * dt * 0.001);
+        this.y += this.speed * dt * 0.001;
+        this.rotation += this.rotationSpeed * dt * 0.001;
+        this.x += (this.rotationSpeed * 3) * dt * 0.001;
+        if (this.y - this.size > this.areaHeight + 30 || this.x < -80 || this.x > this.areaWidth + 80) {
+          this.reset(this.areaWidth, this.areaHeight);
+          this.y = -10;
+        }
+      }
+      draw(ctx) {
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.globalAlpha = this.opacity;
+        ctx.fillStyle = this.color;
+        ctx.shadowColor = "rgba(0,0,0,0.12)";
+        ctx.shadowBlur = Math.min(6, this.size * 0.15);
+
+        if (this.shape === "needle") {
+          const w = Math.max(1, this.size * 0.12);
+          const h = this.size * 1.8;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, w, h * 0.5, 0, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.globalAlpha = Math.min(0.35, this.opacity * 0.35);
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          ctx.beginPath();
+          ctx.ellipse(-w*0.25, -h*0.1, w*0.4, h*0.25, -0.3, 0, 2*Math.PI);
+          ctx.fill();
+        } else {
+          const w = this.size;
+          const h = this.size * 0.9;
+          ctx.beginPath();
+          ctx.moveTo(-w * 0.5, 0);
+          ctx.quadraticCurveTo(0, -h, w * 0.5, 0);
+          ctx.quadraticCurveTo(0, h*0.6, -w * 0.5, 0);
+          ctx.fill();
+          ctx.globalAlpha = Math.min(0.35, this.opacity * 0.35);
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          ctx.beginPath();
+          ctx.moveTo(-w * 0.2, 0);
+          ctx.quadraticCurveTo(0, -h*0.4, w * 0.1, 0);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    class Snowflake {
+      constructor(areaWidth, areaHeight) {
+        this.reset(areaWidth, areaHeight);
+      }
+      reset(areaWidth, areaHeight) {
+        this.areaWidth = areaWidth;
+        this.areaHeight = areaHeight;
+        this.x = Math.random() * areaWidth;
+        this.y = -10 - Math.random() * areaHeight * 0.2;
+        this.size = 2 + Math.random() * 6;
+        this.speed = 6 + Math.random() * 18;
+        this.swayAmp = 6 + Math.random() * 14;
+        this.swayFreq = 0.05 + Math.random() * 0.3;
+        this.rotation = Math.random() * Math.PI * 2;
+        this.rotationSpeed = (-0.3 + Math.random() * 0.6);
+        this.opacity = 0.6 + Math.random() * 0.35;
+        this.twinkle = Math.random() * 1000;
+        this.life = 0;
+      }
+      update(dt) {
+        this.life += dt;
+        const t = (this.life * 0.001) + this.twinkle;
+        const sway = Math.sin(t * this.swayFreq * 2 * Math.PI) * this.swayAmp;
+        this.x += (sway * dt * 0.001);
+        this.y += this.speed * dt * 0.001;
+        this.rotation += this.rotationSpeed * dt * 0.001;
+        if (this.y - this.size > this.areaHeight + 30 || this.x < -80 || this.x > this.areaWidth + 80) {
+          this.reset(this.areaWidth, this.areaHeight);
+          this.y = -10;
+        }
+      }
+      draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+
+        // gentle pulsing/twinkle
+        const pulse = 0.7 + Math.sin(this.life * 0.002 + this.twinkle) * 0.25;
+        ctx.globalAlpha = Math.min(1, this.opacity * pulse);
+
+        // draw a nicer 6-armed snowflake with small side branches
+        ctx.strokeStyle = `rgba(255,255,255,${0.98})`;
+        ctx.lineWidth = Math.max(0.6, this.size * 0.12);
+        ctx.lineCap = "round";
+
+        const arms = 6;
+        const R = this.size;
+        for (let a = 0; a < arms; a++) {
+          ctx.save();
+          ctx.rotate((a / arms) * Math.PI * 2);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(0, -R);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(0, -R * 0.6);
+          ctx.lineTo(-R * 0.2, -R * 0.4);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(0, -R * 0.6);
+          ctx.lineTo(R * 0.2, -R * 0.4);
+          ctx.stroke();
+
+          ctx.restore();
+        }
+
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(255,255,255,0.98)";
+        ctx.arc(0, 0, Math.max(0.6, R * 0.18), 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+    }
+
+    function createParticles(count, width, height, themeKind) {
+      particles = [];
+      for (let i = 0; i < count; i++) {
+        let p;
+        if (themeKind === "winter") {
+          p = new Snowflake(width, height);
+        } else {
+          p = new Leaf(width, height, themeKind);
+        }
+        p.y = Math.random() * height;
+        p.life = Math.random() * 3000;
+        particles.push(p);
+      }
+    }
+
+    function step(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dtSinceRaf = timestamp - lastTime;
+      lastTime = timestamp;
+
+      if (!lastDrawTime) {
+        lastDrawTime = timestamp - MIN_FRAME_INTERVAL;
+      }
+
+      const sinceDraw = timestamp - lastDrawTime;
+      if (sinceDraw >= MIN_FRAME_INTERVAL) {
+        const dt = Math.min(sinceDraw, 200);
+        lastDrawTime = timestamp;
+
+        const rect = leafCanvas.getBoundingClientRect();
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        for (let i = 0; i < particles.length; i++) {
+          const p = particles[i];
+          p.update(dt);
+          p.draw(ctx);
+        }
+      }
+
+      rafId = requestAnimationFrame(step);
+    }
+
+    function startParticles(force) {
+      if (mq.matches) return;
+
+      if (rafId && !force) return;
+      if (force) {
+        try { if (rafId) cancelAnimationFrame(rafId); } catch(e){}
+        rafId = null;
+        particles = [];
+      }
+
+      leafCanvas.style.display = "block";
+      lastTime = 0;
+      lastDrawTime = 0;
+      fitCanvasToDisplaySize(leafCanvas);
+      const rect = leafCanvas.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      const count = Math.min(MAX_PARTICLES, Math.max(12, Math.floor(area / 1400)));
+      createParticles(count, rect.width, rect.height, theme);
+      rafId = requestAnimationFrame(step);
+    }
+
+    function stopParticles(force) {
+      try { leafCanvas.style.display = "none"; } catch(e){}
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+        lastTime = 0;
+        lastDrawTime = 0;
+      }
+      if (force) particles = [];
+    }
+
+    function syncParticleVisibility() {
+      const landingDisplay = getComputedStyle(landing).display;
+      if (landingDisplay === "none") {
+        stopParticles(false);
+      } else {
+        if (!mq.matches) {
+          stopParticles(true);
+          setTimeout(() => {
+            startParticles(true);
+          }, 40);
+        }
+      }
+    }
+
+    let resizeTimer = null;
+    function handleResize() {
+      fitCanvasToDisplaySize(leafCanvas);
+      const rect = leafCanvas.getBoundingClientRect();
+      particles.forEach(p => {
+        p.areaWidth = rect.width;
+        p.areaHeight = rect.height;
+      });
+    }
+    window.addEventListener("resize", () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        handleResize();
+        resizeTimer = null;
+      }, 120);
+    });
+
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    function handlePrefersReducedMotion() {
+      if (mq.matches) {
+        stopParticles(true);
+      } else {
+        if (getComputedStyle(landing).display !== "none") {
+          stopParticles(true);
+          startParticles(true);
+        }
+      }
+    }
+    if (mq.addEventListener) mq.addEventListener("change", handlePrefersReducedMotion);
+    else if (mq.addListener) mq.addListener(handlePrefersReducedMotion);
+    handlePrefersReducedMotion();
+
+    syncParticleVisibility();
+
+    window.applyTheme = applyTheme;
+
+    // ensure we refresh the passcode every time the socket reconnects
+    ws.addEventListener('open', () => fetchPasscodeAndUpdate());
+  </script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+/**
+ * UnTamed
+ * Copyright (C) 2025  vestron.wtf <oss@vestron.wtf>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the License only.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 50%;
+  z-index: -1;
+  transition: object-position 400ms ease;
+  pointer-events: none;
+  -webkit-mask-image: radial-gradient(ellipse at center, rgba(0,0,0,1) 60%, rgba(0,0,0,0.85) 75%, rgba(0,0,0,0.6) 90%, rgba(0,0,0,0) 100%);
+  mask-image: radial-gradient(ellipse at center, rgba(0,0,0,1) 60%, rgba(0,0,0,0.85) 75%, rgba(0,0,0,0.6) 90%, rgba(0,0,0,0) 100%);
+  filter: saturate(0.95) contrast(0.95);
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", sans-serif;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  background: #000;
+}
+
+.overlay {
+  background: rgba(0,0,0,0.55);
+  padding: 40px;
+  border-radius: 20px;
+  margin: 80px auto;
+  width: 80%;
+  max-width: 600px;
+  text-align: center;
+  color: white;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+}
+
+button {
+  padding: 12px 24px;
+  font-size: 18px;
+  border-radius: 8px;
+  border: none;
+  background: #1e90ff;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0f75d8;
+}
+
+video {
+  margin-top: 20px;
+  width: 100%;
+  border-radius: 10px;
+  display: none;
+}
+
+input#passcodeInput {
+  margin-top: 12px;
+  padding: 8px 10px;
+  font-size: 18px;
+  width: 200px;
+  text-align: center;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  letter-spacing: 6px;
+  font-family: "Courier New", monospace;
+}
+
+.hint {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+@media (max-width: 600px) {
+  .overlay {
+    margin: 40px 12px;
+    padding: 28px;
+  }
+}
+
+#reloadNotice {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 18px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  display: none;
+  text-align: center;
+  z-index: 9999;
+}
